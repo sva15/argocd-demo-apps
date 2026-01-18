@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postsync-seed-data
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-weight: "1"
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      containers:
+      - name: seed
+        image: postgres:14-alpine
+        env:
+        - name: PGPASSWORD
+          value: apppass
+        command:
+        - sh
+        - -c
+        - |
+          echo "Seeding initial data..."
+          
+          psql -h postgres -U appuser -d appdb <<-EOSQL
+            INSERT INTO users (username, email) 
+            VALUES 
+              ('john_doe', 'john@example.com'),
+              ('jane_smith', 'jane@example.com')
+            ON CONFLICT (username) DO NOTHING;
+            
+            INSERT INTO posts (user_id, title, content)
+            SELECT 
+              u.id,
+              'Welcome Post',
+              'This is an initial post'
+            FROM users u
+            WHERE u.username = 'admin'
+            ON CONFLICT DO NOTHING;
+            
+            SELECT COUNT(*) as user_count FROM users;
+            SELECT COUNT(*) as post_count FROM posts;
+          EOSQL
+          
+          echo "✅ Data seeding completed"
+      restartPolicy: Never
+  backoffLimit: 2

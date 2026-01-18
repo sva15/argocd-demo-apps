@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: presync-migrate
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-weight: "0"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  template:
+    spec:
+      containers:
+      - name: migrate
+        image: postgres:14-alpine
+        env:
+        - name: PGPASSWORD
+          value: apppass
+        command:
+        - sh
+        - -c
+        - |
+          echo "Running database migrations..."
+          
+          # Create users table
+          psql -h postgres -U appuser -d appdb <<-EOSQL
+            CREATE TABLE IF NOT EXISTS users (
+              id SERIAL PRIMARY KEY,
+              username VARCHAR(50) UNIQUE NOT NULL,
+              email VARCHAR(100) UNIQUE NOT NULL,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE TABLE IF NOT EXISTS posts (
+              id SERIAL PRIMARY KEY,
+              user_id INTEGER REFERENCES users(id),
+              title VARCHAR(200) NOT NULL,
+              content TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            INSERT INTO users (username, email) 
+            VALUES ('admin', 'admin@example.com')
+            ON CONFLICT (username) DO NOTHING;
+            
+            SELECT 'Migration completed successfully' as status;
+          EOSQL
+          
+          echo "✅ Database migrations completed"
+      restartPolicy: Never
+  backoffLimit: 3

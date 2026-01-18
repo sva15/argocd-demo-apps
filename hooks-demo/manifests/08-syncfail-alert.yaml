@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: syncfail-alert
+  annotations:
+    argocd.argoproj.io/hook: SyncFail
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      containers:
+      - name: alert
+        image: alpine:latest
+        command:
+        - sh
+        - -c
+        - |
+          echo "======================================"
+          echo "🚨 DEPLOYMENT FAILED"
+          echo "======================================"
+          echo "Application: Backend API"
+          echo "Time: $(date)"
+          echo "Action: Check ArgoCD logs for details"
+          echo "======================================"
+          
+          # In real scenario:
+          # - Send alert to on-call team
+          # - Create incident ticket
+          # - Trigger rollback if needed
+      restartPolicy: Never

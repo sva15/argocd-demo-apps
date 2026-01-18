@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: presync-check-db
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-weight: "-5"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  template:
+    metadata:
+      name: presync-check-db
+    spec:
+      containers:
+      - name: check-db
+        image: postgres:14-alpine
+        command:
+        - sh
+        - -c
+        - |
+          echo "Checking database connectivity..."
+          until pg_isready -h postgres -p 5432 -U appuser; do
+            echo "Database not ready, waiting..."
+            sleep 2
+          done
+          echo "✅ Database is ready!"
+      restartPolicy: Never
+  backoffLimit: 10

@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postsync-notify
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-weight: "5"
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      containers:
+      - name: notify
+        image: alpine:latest
+        command:
+        - sh
+        - -c
+        - |
+          echo "======================================"
+          echo "✅ DEPLOYMENT SUCCESSFUL"
+          echo "======================================"
+          echo "Application: Backend API"
+          echo "Time: $(date)"
+          echo "Status: All hooks completed successfully"
+          echo "======================================"
+          
+          # In real scenario, would send to Slack/Teams/Email
+          # curl -X POST https://hooks.slack.com/...           #   -d '{"text":"Deployment successful!"}'
+      restartPolicy: Never
