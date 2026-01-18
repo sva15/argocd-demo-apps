@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-health-demo
+  annotations:
+    # Custom health check using Lua script
+    argocd.argoproj.io/health-check: |
+      hs = {}
+      if obj.status ~= nil then
+        if obj.status.readyReplicas ~= nil and obj.status.readyReplicas == obj.spec.replicas then
+          hs.status = "Healthy"
+          hs.message = "All " .. obj.spec.replicas .. " replicas are ready"
+          return hs
+        end
+        if obj.status.replicas ~= nil and obj.status.replicas > 0 then
+          hs.status = "Progressing"
+          hs.message = "Deployment is progressing (" .. (obj.status.readyReplicas or 0) .. "/" .. obj.spec.replicas .. " ready)"
+          return hs
+        end
+      end
+      hs.status = "Degraded"
+      hs.message = "No replicas are running"
+      return hs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: custom-health
+  template:
+    metadata:
+      labels:
+        app: custom-health
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        # Readiness probe - determines if pod is ready to serve traffic
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+        # Liveness probe - determines if pod needs to be restarted
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: custom-health-demo
+spec:
+  selector:
+    app: custom-health
+  ports:
+  - port: 80
+    targetPort: 80
