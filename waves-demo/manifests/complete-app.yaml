@@ -1,0 +1,482 @@
+---
+# WAVE -3: Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+
+---
+# WAVE -2: ConfigMaps and Secrets
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+data:
+  database_host: "postgres-service"
+  database_port: "5432"
+  redis_host: "redis-service"
+  redis_port: "6379"
+  app_environment: "development"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+type: Opaque
+stringData:
+  database_password: "postgres_secret_password"
+  redis_password: "redis_secret_password"
+  api_key: "secret_api_key_12345"
+
+---
+# WAVE -1: PersistentVolumeClaims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# WAVE 0: Database (PostgreSQL)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+      tier: data
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: data
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: appdb
+        - name: POSTGRES_USER
+          value: appuser
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: database_password
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - appuser
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  clusterIP: None
+
+---
+# WAVE 1: Cache Layer (Redis)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+      tier: cache
+  template:
+    metadata:
+      labels:
+        app: redis
+        tier: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+        command:
+        - redis-server
+        - --requirepass
+        - 
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: redis_password
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+
+---
+# WAVE 2: Auth Service (Critical Dependency)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        tier: backend
+    spec:
+      containers:
+      - name: auth
+        image: nginx:alpine  # Placeholder
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database_host
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: redis_host
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - port: 8080
+    targetPort: 80
+
+---
+# WAVE 3: Backend Services (Parallel Deployment)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+        tier: backend
+    spec:
+      containers:
+      - name: user-service
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        envFrom:
+        - configMapRef:
+            name: app-config
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    app: user-service
+  ports:
+  - port: 8080
+    targetPort: 80
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+        tier: backend
+    spec:
+      containers:
+      - name: product-service
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    app: product-service
+  ports:
+  - port: 8080
+    targetPort: 80
+
+---
+# WAVE 4: API Gateway (Depends on all backend services)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        tier: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  selector:
+    app: api-gateway
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+
+---
+# WAVE 5: Frontend (Depends on API Gateway)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: presentation
+    spec:
+      containers:
+      - name: frontend
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        env:
+        - name: API_GATEWAY_URL
+          value: "http://api-gateway"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30001
+
+---
+# WAVE 6: Ingress (Last to deploy)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  namespace: waves-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  rules:
+  - host: waves-demo.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
